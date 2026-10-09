@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClimateShield AI 2.0 — Predict • Explain • Protect</title>
+  <meta name="description" content="ClimateShield AI 2.0: hyperlocal, explainable flood-risk prototype for Wakad, Pune. Demo / synthetic data.">
+  <!-- tiny inline favicon so the browser does not ask the server for /favicon.ico -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5 13 12 15 7-2 12-7.500 12-15V7z' fill='%2310b981'/%3E%3C/svg%3E">
+
+  <!-- Leaflet (map) and Chart.js (bar chart) are loaded from CDNs, so the first load needs internet. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#22d3ee"/>
+          </linearGradient>
+        </defs>
+        <path d="M24 3 6 10v13c0 11 7.500 19 18 22 10.500-3 18-11 18-22V10z" fill="none" stroke="url(#lg)" stroke-width="2.500" stroke-linejoin="round"/>
+        <path d="M24 14c-5 5-7 9-7 12.500a7 7 0 0 0 14 0C31 23 29 19 24 14z" fill="url(#lg)" opacity=".9"/>
+        <path d="M24 22v13" stroke="#06101f" stroke-width="1.800" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <h1>ClimateShield <span class="grad">AI</span> 2.0</h1>
+        <p class="tagline">Predict <i>•</i> Explain <i>•</i> Protect</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge badge-demo" title="The training labels and the input data are synthetic. See the notice at the bottom of the page.">DEMO / SYNTHETIC DATA</span>
+      <span id="api-status" class="status" role="status"><i class="dot"></i><span>Connecting…</span></span>
+    </div>
+  </header>
+
+  <main>
+    <div id="global-alert" class="alert" role="alert" hidden>
+      <span id="global-alert-text"></span>
+      <button type="button" id="global-alert-retry" class="btn-ghost">Try again</button>
+    </div>
+
+    <!-- ===================== LOCATION + SCENARIO CONTROLS ===================== -->
+    <section class="glass control-bar" aria-label="Location and rainfall scenario">
+      <div class="field">
+        <label for="location">Location <span class="chip chip-cyan">Prototype Study Area</span></label>
+        <select id="location">
+          <option value="wakad" selected>Wakad, Pune</option>
+          <option value="more" disabled>More areas — planned</option>
+        </select>
+      </div>
+
+      <div class="field grow">
+        <label for="rainfall">Rainfall scenario, 24 h <output id="rainfall-out" for="rainfall">100 mm</output></label>
+        <input type="range" id="rainfall" min="10" max="220" step="5" value="100">
+        <div class="presets" id="rain-presets" role="group" aria-label="Rainfall demo presets">
+          <button type="button" data-mm="30">Light<span>30</span></button>
+          <button type="button" data-mm="60">Moderate<span>60</span></button>
+          <button type="button" data-mm="100">Heavy<span>100</span></button>
+          <button type="button" data-mm="150">Very heavy<span>150</span></button>
+          <button type="button" data-mm="200">Extreme<span>200</span></button>
+        </div>
+      </div>
+
+      <button type="button" id="analyze" class="btn-primary">
+        <span class="btn-label">Analyze Risk</span>
+      </button>
+    </section>
+    <p class="hint">
+      Rainfall is a <strong>scenario you choose</strong>, not live weather. The slider covers 10–220&nbsp;mm, the range of
+      the demo training data. Preset names are demo labels, not official rainfall categories.
+    </p>
+
+    <!-- ===================== MAP + RISK CARDS ===================== -->
+    <div class="layout">
+      <section class="glass card map-card" aria-labelledby="map-title">
+        <div class="card-head">
+          <div>
+            <h2 id="map-title">Flood-Risk Map</h2>
+            <p class="sub">Each square is a ~500&nbsp;m grid cell scored by the model · click a cell</p>
+          </div>
+          <span class="chip chip-cyan" id="map-mode">Loading…</span>
+        </div>
+        <div id="map" class="map" role="region" aria-label="Interactive flood-risk map"></div>
+        <p class="tiny muted map-note">
+          Prototype study area near Wakad — <strong>not the official boundary</strong>. Cell colours are
+          model-estimated scores for the chosen rainfall scenario (prototype thresholds: LOW 0–39, MEDIUM 40–69, HIGH 70–100).
+        </p>
+      </section>
+
+      <aside class="side">
+        <!-- Overall risk -->
+        <section class="glass card" id="overall-card" aria-labelledby="overall-title" aria-live="polite">
+          <div class="card-head">
+            <h2 id="overall-title">Overall Risk</h2>
+            <span class="chip">Wakad, Pune</span>
+          </div>
+          <div class="gauge-wrap">
+            <div class="gauge" id="gauge">
+              <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="gauge-track" cx="60" cy="60" r="52"></circle>
+                <circle class="gauge-arc" id="gauge-arc" cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
+              </svg>
+              <div class="gauge-center">
+                <span class="gauge-num" id="overall-score">—</span>
+                <span class="gauge-unit">/ 100</span>
+              </div>
+            </div>
+            <div class="gauge-meta">
+              <span class="level-pill level-na" id="overall-level">—</span>
+              <p class="small strong">Model-estimated flood-risk score</p>
+              <p class="tiny muted" id="overall-method">Waiting for the model…</p>
+            </div>
+          </div>
+          <div class="level-bars" id="level-bars" aria-label="Number of grid cells per risk level"></div>
+          <p class="tiny muted" id="overall-scenario"></p>
+        </section>
+
+        <!-- Selected cell (POST /api/predict) -->
+        <section class="glass card" id="cell-card" aria-labelledby="cell-title" aria-live="polite">
+          <div class="card-head">
+            <h2 id="cell-title">Selected Cell</h2>
+            <span class="chip chip-cyan" id="cell-id">—</span>
+          </div>
+          <div id="cell-body" class="cell-body">
+            <p class="empty">Click a grid cell on the map to analyse it.</p>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- ===================== FACTORS + EXPLANATION ===================== -->
+    <div class="two-col">
+      <section class="glass card" aria-labelledby="factors-title">
+        <div class="card-head">
+          <h2 id="factors-title">Risk Factors</h2>
+          <span class="chip">Model-wide importance</span>
+        </div>
+        <div class="chart-box" id="factors-box">
+          <canvas id="factors-chart" aria-label="Bar chart of model feature importance" role="img"></canvas>
+        </div>
+        <div id="factor-cards" class="factor-cards"><p class="empty">Factor cards appear after the first prediction.</p></div>
+        <p class="tiny muted" id="factors-note">Importance values appear after the first prediction.</p>
+      </section>
+
+      <section class="glass card" aria-labelledby="explain-title">
+        <div class="card-head">
+          <h2 id="explain-title">AI Explanation</h2>
+          <span class="chip chip-amber">Model-based prototype explanation</span>
+        </div>
+        <div id="explain-body" class="explain">
+          <p class="empty">The explanation appears after a cell is analysed.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================== VULNERABILITIES + RECOMMENDATIONS ===================== -->
+    <div class="two-col">
+      <section class="glass card" aria-labelledby="vuln-title">
+        <div class="card-head">
+          <h2 id="vuln-title">Potentially Vulnerable Places</h2>
+          <span class="chip chip-amber" id="vuln-chip">Prototype</span>
+        </div>
+        <div id="vuln-cats" class="cat-row" aria-label="Number of listed places per category"></div>
+        <div id="vuln-body"><p class="empty">Loading…</p></div>
+        <h3 class="subhead">Low-lying grid cells <span class="chip">from grid elevation data</span></h3>
+        <div id="lowcells"><p class="empty">Loading…</p></div>
+        <h3 class="subhead">Highest-scoring grid cells <span class="chip">model output</span></h3>
+        <div id="topcells"><p class="empty">Loading…</p></div>
+        <p class="tiny muted">Grid cells are model-estimated areas, <strong>not verified locations</strong>.</p>
+      </section>
+
+      <section class="glass card" aria-labelledby="reco-title">
+        <div class="card-head">
+          <h2 id="reco-title">Recommended Actions</h2>
+          <span class="chip chip-amber">General · prototype</span>
+        </div>
+        <div id="reco-body"><p class="empty">Recommendations appear after a cell is analysed.</p></div>
+        <p class="tiny muted">
+          General prototype suggestions from simple rules — <strong>not official emergency instructions</strong>.
+          Always follow warnings from the India Meteorological Department and local authorities.
+        </p>
+      </section>
+    </div>
+
+    <!-- ===================== WHAT-IF SIMULATOR ===================== -->
+    <section class="glass card whatif" id="whatif-card" aria-labelledby="whatif-title">
+      <div class="card-head">
+        <div>
+          <h2 id="whatif-title">What-If Simulator</h2>
+          <p class="sub">Change hypothetical conditions for the selected cell and ask the model to re-score it.</p>
+        </div>
+        <span class="chip chip-amber">Hypothetical</span>
+      </div>
+
+      <div class="whatif-grid">
+        <div class="controls">
+          <p class="tiny muted" id="sim-cell">Select a grid cell first.</p>
+
+          <div class="sim-field">
+            <label for="sim-drainage">Drainage improvement <output id="sim-drainage-out">none</output></label>
+            <input type="range" id="sim-drainage" min="0" max="4" step="1" value="0" disabled>
+          </div>
+
+          <div class="sim-field">
+            <label for="sim-green">Green cover / less concrete <output id="sim-green-out">none</output></label>
+            <input type="range" id="sim-green" min="0" max="40" step="5" value="0" disabled>
+            <p class="tiny muted">Modelled as a reduction in impervious surface (the model has no separate green-cover feature).</p>
+          </div>
+
+          <div class="sim-field">
+            <label for="sim-rain">Rainfall in the scenario <output id="sim-rain-out">—</output></label>
+            <input type="range" id="sim-rain" min="10" max="220" step="5" value="100" disabled>
+          </div>
+
+          <div class="sim-field sim-disabled">
+            <label>Water retention <output>not modelled</output></label>
+            <input type="range" min="0" max="1" value="0" disabled>
+            <p class="tiny muted">No matching feature exists in the current model, so this lever is not offered.</p>
+          </div>
+
+          <div class="btn-row">
+            <button type="button" id="sim-run" class="btn-primary" disabled><span class="btn-label">Run scenario</span></button>
+            <button type="button" id="sim-reset" class="btn-ghost" disabled>Reset</button>
+          </div>
+        </div>
+
+        <div class="results" id="sim-result" aria-live="polite">
+          <p class="empty">Pick a cell, adjust a lever and press <strong>Run scenario</strong>. The scores come from the Flask API / saved model.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== DATA & MODEL TRANSPARENCY ===================== -->
+    <section class="glass card" id="transparency-card" aria-labelledby="transp-title">
+      <div class="card-head">
+        <div>
+          <h2 id="transp-title">Data &amp; Model Transparency</h2>
+          <p class="sub">What is real, what is synthetic, and what each number on this page means.</p>
+        </div>
+        <span class="chip chip-cyan">Read from the project files</span>
+      </div>
+      <div id="transp-body" class="transp-grid">
+        <p class="empty">Loading…</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== DATA HONESTY FOOTER ===================== -->
+  <footer class="footer glass">
+    <p class="tiny muted" id="footer-status">Data status: loading…</p>
+    <p class="tiny muted" id="footer-thresholds"></p>
+    <p class="tiny muted">ClimateShield AI 2.0 · PCCOE International Grand Challenge 2026 · Prototype</p>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
